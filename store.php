@@ -1,5 +1,16 @@
 <?php
 
+/**
+ * ==============================================================================
+ * 👻 بوت متجر الفانتوم - Phantom Store Telegram Bot
+ * ==============================================================================
+ * نظام متكامل لإدارة بيع الاشتراكات الرقمية والربط التلقائي مع منصات الـ API.
+ */
+
+// إظهار الأخطاء أثناء التطوير (يمكن إلغاؤها عند الإنتاج)
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
 // ==============================================================================
 // 1. [ الإعدادات الرئيسية والمتغيرات ]
 // ==============================================================================
@@ -12,19 +23,31 @@ $adminId = 1254240396;
 
 // بيانات API الخاصة بالموقع المزود (Provider)
 $providerApiUrl = "https://nxce.io/api/v1"; 
-$providerApiKey = "pk_live_h5xu...";
+$providerApiKey = "pk_live_h5xu..."; // استبدله بمفتاح الـ API الحقيقي الخاص بك
 
 // روابط ودوال التليجرام العامة
 $apiUrl   = "https://api.telegram.org/bot" . $botToken;
 $dataFile = "database.json";
+
+// أسماء المنتجات للعرض والنسخ
+$productNames = [
+    'local_daily'    => 'محلي - يومي',
+    'local_weekly'   => 'محلي - أسبوعي',
+    'local_monthly'  => 'محلي - شهري',
+    'global_daily'   => 'عالمي - يومي',
+    'global_weekly'  => 'عالمي - أسبوعي',
+    'global_monthly' => 'عالمي - شهري',
+    'bolt_daily'     => 'بولت تراك - يومي',
+    'bolt_weekly'    => 'بولت تراك - أسبوعي',
+    'bolt_monthly'   => 'بولت تراك - شهري'
+];
 
 // ==============================================================================
 // 2. [ إدارة قاعدة البيانات المحلية JSON ]
 // ==============================================================================
 
 function loadData($file) {
-    if (!file_exists($file)) {
-        $initialData = [
+    if (!file_exists($file)) {$initialData = [
             'users' => [], // قائمة الزبائن والأرصدة [chat_id => balance]
             'prices' => [
                 'local_daily'    => 1.0,  'local_weekly'   => 5.33,  'local_monthly'   => 10.0,
@@ -41,27 +64,15 @@ function loadData($file) {
         file_put_contents($file, json_encode($initialData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
         return $initialData;
     }
-    return json_decode(file_get_contents($file), true);
+    $json = file_get_contents($file);
+    return json_decode($json, true) ?: [];
 }
 
-function saveData($file, $data) {
+function saveData($file,$data) {
     file_put_contents($file, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 }
 
 $db = loadData($dataFile);
-
-// أسماء المنتجات للعرض والنسخ
-$productNames = [
-    'local_daily'    => 'محلي - يومي',
-    'local_weekly'   => 'محلي - أسبوعي',
-    'local_monthly'  => 'محلي - شهري',
-    'global_daily'   => 'عالمي - يومي',
-    'global_weekly'  => 'عالمي - أسبوعي',
-    'global_monthly' => 'عالمي - شهري',
-    'bolt_daily'     => 'بولت تراك - يومي',
-    'bolt_weekly'    => 'بولت تراك - أسبوعي',
-    'bolt_monthly'   => 'بولت تراك - شهري'
-];
 
 // ==============================================================================
 // 3. [ استقبال ومعالجة المدخلات من تليجرام ]
@@ -70,27 +81,31 @@ $productNames = [
 $content = file_get_contents("php://input");
 $update  = json_decode($content, true);
 
+if (!$update) {
+    exit;
+}
+
 // ------------------- [ أولاً: الرسائل النصية ] -------------------
 if (isset($update["message"])) {
-    $chatId = $update["message"]["chat"]["id"];
+    $chatId =$update["message"]["chat"]["id"];
     $text   = trim($update["message"]["text"] ?? '');
 
     // تسجيل الزبون التلقائي فور دخوله البوت أول مرة
     if (!isset($db['users'][$chatId])) {
         $db['users'][$chatId] = 0.0;
-        saveData($dataFile, $db);
+        saveData($dataFile,$db);
     }
 
     // أمر البدء
     if ($text === "/start") {
-        sendMainMenu($chatId, $apiUrl, $db['users'][$chatId]);
+        sendMainMenu($chatId,$apiUrl, $db['users'][$chatId]);
         exit;
     }
 
     // --- [ أوامر المطور / الأدمن ] ---
 
     // 1. عرض جميع الزبائن المسجلين وأرصدتهم (/users)
-    if ($chatId == $adminId && $text === "/users") {
+    if ($chatId == $adminId &&$text === "/users") {
         $totalUsers   = count($db['users']);
         $totalBalance = array_sum($db['users']);
 
@@ -98,15 +113,14 @@ if (isset($update["message"])) {
         $msg .= "ــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــ\n\n";
 
         $i = 1;
-        foreach ($db['users'] as $uId => $balance) {
+        foreach ($db['users'] as $uId =>$balance) {
             $msg .= "{$i}. 👤 **ID:** `{$uId}`\n";
             $msg .= "   💳 **الرصيد:** `{$balance} USDT`\n";
             $msg .= "----------------------------------\n";
             $i++;
 
             if (strlen($msg) > 3500) {
-                sendMessage($chatId, $msg, null, $apiUrl);
-                $msg = "";
+                sendMessage($chatId,$msg, null, $apiUrl);$msg = "";
             }
         }
 
@@ -115,7 +129,7 @@ if (isset($update["message"])) {
         $msg .= "▫️ **إجمالي أموال المحافظ:** `{$totalBalance} USDT`\n";
         $msg .= "ــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــ";
 
-        sendMessage($chatId, $msg, null, $apiUrl);
+        sendMessage($chatId, $msg, null,$apiUrl);
         exit;
     }
 
@@ -123,15 +137,15 @@ if (isset($update["message"])) {
     if ($chatId == $adminId && strpos($text, "/addbalance") === 0) {
         $parts = explode(" ", $text);
         if (count($parts) === 3 && is_numeric($parts[2])) {
-            $targetUser = $parts[1];
+            $targetUser =$parts[1];
             $amount     = (float)$parts[2];
 
             if (!isset($db['users'][$targetUser])) {
                 $db['users'][$targetUser] = 0.0;
             }
 
-            $db['users'][$targetUser] += $amount;
-            saveData($dataFile, $db);
+            $db['users'][$targetUser] +=$amount;
+            saveData($dataFile,$db);
 
             sendMessage($chatId, "✅ تم شحن `{$amount} USDT` للزبون `{$targetUser}`.\nالرصيد الجديد: `{$db['users'][$targetUser]} USDT`", null, $apiUrl);
             sendMessage($targetUser, "🎉 **تم شحن رصيدك بنجاح!**\nتم إضافة `{$amount} USDT` إلى محفظتك بالبوت.\nرصيدك الحالي: `{$db['users'][$targetUser]} USDT`", null, $apiUrl);
@@ -145,12 +159,11 @@ if (isset($update["message"])) {
     if ($chatId == $adminId && strpos($text, "/subbalance") === 0) {
         $parts = explode(" ", $text);
         if (count($parts) === 3 && is_numeric($parts[2])) {
-            $targetUser = $parts[1];
+            $targetUser =$parts[1];
             $amount     = (float)$parts[2];
 
-            if (isset($db['users'][$targetUser])) {
-                $db['users'][$targetUser] = max(0, $db['users'][$targetUser] - $amount);
-                saveData($dataFile, $db);
+            if (isset($db['users'][$targetUser])) {$db['users'][$targetUser] = max(0,$db['users'][$targetUser] -$amount);
+                saveData($dataFile,$db);
 
                 sendMessage($chatId, "✅ تم خصم `{$amount} USDT` من الزبون `{$targetUser}`.\nالرصيد الحالي: `{$db['users'][$targetUser]} USDT`", null, $apiUrl);
                 sendMessage($targetUser, "⚠️ **تعديل رصيد:**\nتم خصم `{$amount} USDT` من محفظتك.\nرصيدك الحالي: `{$db['users'][$targetUser]} USDT`", null, $apiUrl);
@@ -166,19 +179,19 @@ if (isset($update["message"])) {
 
 // ------------------- [ ثانياً: ضغطات الأزرار الشفافة ] -------------------
 if (isset($update["callback_query"])) {
-    $cb          = $update["callback_query"];
-    $chatId      = $cb["message"]["chat"]["id"];
-    $msgId       = $cb["message"]["message_id"];
-    $data        = $cb["data"];
+    $cb          =$update["callback_query"];
+    $chatId      =$cb["message"]["chat"]["id"];
+    $msgId       =$cb["message"]["message_id"];
+    $data        =$cb["data"];
     $userBalance = $db['users'][$chatId] ?? 0.0;
 
     if ($data === "main_menu") {
-        editMainMenu($chatId, $msgId, $apiUrl, $userBalance);
+        editMainMenu($chatId,$msgId, $apiUrl,$userBalance);
     } elseif (in_array($data, ['cat_local', 'cat_global', 'cat_bolt'])) {
-        showCategoryProducts($chatId, $msgId, $data, $apiUrl, $db, $productNames);
+        showCategoryProducts($chatId,$msgId, $data,$apiUrl, $db,$productNames);
     } elseif (strpos($data, "buy_") === 0) {
         $pCode = str_replace("buy_", "", $data);
-        processOrderViaAPI($chatId, $msgId, $pCode, $apiUrl, $db, $productNames, $dataFile, $providerApiUrl, $providerApiKey);
+        processOrderViaAPI($chatId, $msgId,$pCode, $apiUrl,$db, $productNames,$dataFile, $providerApiUrl,$providerApiKey);
     }
 }
 
@@ -186,13 +199,17 @@ if (isset($update["callback_query"])) {
 // 4. [ منطق الشراء والربط المباشر مع API الموقع المزود ]
 // ==============================================================================
 
-function processOrderViaAPI($chatId, $msgId, $pCode, $apiUrl, &$db, $productNames, $dataFile, $providerApiUrl, $providerApiKey) {
-    $price       = $db['prices'][$pCode] ?? 0;
+function processOrderViaAPI($chatId,$msgId, $pCode,$apiUrl, &$db,$productNames, $dataFile,$providerApiUrl, $providerApiKey) {$price       = $db['prices'][$pCode] ?? 0;
     $userBalance = $db['users'][$chatId] ?? 0.0;
 
+    // التأكد من وجود الخدمة ومعرفها
+    if (!isset($db['service_ids'][$pCode])) {
+        editMessageText($chatId, $msgId, "⚠️ عذراً، هذه الخدمة غير متوفرة حالياً.", null, $apiUrl);
+        return;
+    }
+
     // 1. فحص رصيد الزبون في محفظة البوت
-    if ($userBalance < $price) {
-        $msg  = "❌ **رصيدك غير كافٍ لإتمام عملية الشراء!**\n\n";
+    if ($userBalance < $price) {$msg  = "❌ **رصيدك غير كافٍ لإتمام عملية الشراء!**\n\n";
         $msg .= "📌 **سعر الخدمة:** `{$price} USDT`\n";
         $msg .= "💳 **رصيدك الحالي:** `{$userBalance} USDT`\n\n";
         $msg .= "يرجى الشحن من المطور لاستكمال طلبك.";
@@ -203,7 +220,7 @@ function processOrderViaAPI($chatId, $msgId, $pCode, $apiUrl, &$db, $productName
                 [['text' => '🔙 العودة للقائمة', 'callback_data' => 'main_menu']]
             ]
         ];
-        editMessageText($chatId, $msgId, $msg, $keyboard, $apiUrl);
+        editMessageText($chatId, $msgId,$msg, $keyboard,$apiUrl);
         return;
     }
 
@@ -220,21 +237,22 @@ function processOrderViaAPI($chatId, $msgId, $pCode, $apiUrl, &$db, $productName
     $ch = curl_init($providerApiUrl);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($apiPayload));
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
     $responseRaw = curl_exec($ch);
     curl_close($ch);
 
     $response = json_decode($responseRaw, true);
 
     // 3. معالجة نتيجة الشراء
-    if ($response && (isset($response['order']) || (isset($response['status']) && $response['status'] === 'success'))) {
+    if ($response && (isset($response['order']) || (isset($response['status']) &&$response['status'] === 'success'))) {
         
-        // خصم السعر من رصيد محفظة الزبون في البوت
-        $db['users'][$chatId] -= $price;
-        saveData($dataFile, $db);
+        // خصم السعر من رصيد محفظة الزبون في البوت وتحديث الملف فوراً
+        $db['users'][$chatId] -=$price;
+        saveData($dataFile,$db);
 
-        $orderId      = $response['order'] ?? rand(100000, 999999);
+        $orderId      =$response['order'] ?? rand(100000, 999999);
         $itemUsername = $response['username'] ?? ($response['code'] ?? 'تم التفعيل بنجاح');
-        $itemPassword = $response['password'] ?? 'راجِع التفاصيل في الحساب';
+        $itemPassword =$response['password'] ?? 'راجِع التفاصيل في الحساب';
         $purchaseDate = date("Y-m-d H:i");
 
         // بناء رسالة الفاتورة الاحترافية والتسليم
@@ -263,7 +281,13 @@ function processOrderViaAPI($chatId, $msgId, $pCode, $apiUrl, &$db, $productName
         $msg .= "ــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــ\n";
         $msg .= "⚙️ لأي استفسار، تواصل مع الدعم الفني: @Y_a_J2003";
 
-        editMessageText($chatId, $msgId, $msg, null, $apiUrl);
+        $keyboard = [
+            'inline_keyboard' => [
+                [['text' => '🔙 العودة للقائمة الرئيسية', 'callback_data' => 'main_menu']]
+            ]
+        ];
+
+        editMessageText($chatId, $msgId,$msg, $keyboard,$apiUrl);
 
     } else {
         // فشل الشراء من الموقع المزود
@@ -278,7 +302,7 @@ function processOrderViaAPI($chatId, $msgId, $pCode, $apiUrl, &$db, $productName
                 [['text' => '🔙 العودة للقائمة الرئيسية', 'callback_data' => 'main_menu']]
             ]
         ];
-        editMessageText($chatId, $msgId, $msg, $keyboard, $apiUrl);
+        editMessageText($chatId, $msgId,$msg, $keyboard,$apiUrl);
     }
 }
 
@@ -286,8 +310,7 @@ function processOrderViaAPI($chatId, $msgId, $pCode, $apiUrl, &$db, $productName
 // 5. [ واجهات الواجهة والأزرار والتواصل ]
 // ==============================================================================
 
-function sendMainMenu($chatId, $apiUrl, $balance) {
-    $keyboard = [
+function sendMainMenu($chatId,$apiUrl, $balance) {$keyboard = [
         'inline_keyboard' => [
             [['text' => '🏷️ خدمات المحلي', 'callback_data' => 'cat_local']],
             [['text' => '🌐 خدمات العالمي', 'callback_data' => 'cat_global']],
@@ -296,11 +319,10 @@ function sendMainMenu($chatId, $apiUrl, $balance) {
         ]
     ];
     $msg = "👻 **أهلاً بك في متجر الفانتوم**\n\n💳 **رصيدك الحالي:** `{$balance} USDT`\n\nاختر القسم المطلوب لتصفح الاشتراكات:";
-    sendMessage($chatId, $msg, $keyboard, $apiUrl);
+    sendMessage($chatId,$msg, $keyboard,$apiUrl);
 }
 
-function editMainMenu($chatId, $msgId, $apiUrl, $balance) {
-    $keyboard = [
+function editMainMenu($chatId, $msgId,$apiUrl, $balance) {$keyboard = [
         'inline_keyboard' => [
             [['text' => '🏷️ خدمات المحلي', 'callback_data' => 'cat_local']],
             [['text' => '🌐 خدمات العالمي', 'callback_data' => 'cat_global']],
@@ -309,61 +331,60 @@ function editMainMenu($chatId, $msgId, $apiUrl, $balance) {
         ]
     ];
     $msg = "👻 **أهلاً بك في متجر الفانتوم**\n\n💳 **رصيدك الحالي:** `{$balance} USDT`\n\nاختر القسم المطلوب لتصفح الاشتراكات:";
-    editMessageText($chatId, $msgId, $msg, $keyboard, $apiUrl);
+    editMessageText($chatId, $msgId,$msg, $keyboard,$apiUrl);
 }
 
-function showCategoryProducts($chatId, $msgId, $catKey, $apiUrl, $db, $productNames) {
-    $categories = [
+function showCategoryProducts($chatId, $msgId,$catKey, $apiUrl,$db, $productNames) {$categories = [
         'cat_local'  => ['title' => "🏷️ **خدمات المحلي**", 'keys' => ['local_daily', 'local_weekly', 'local_monthly']],
         'cat_global' => ['title' => "🌐 **خدمات العالمي**", 'keys' => ['global_daily', 'global_weekly', 'global_monthly']],
         'cat_bolt'   => ['title' => "⚡ **خدمات بولت تراك**", 'keys' => ['bolt_daily', 'bolt_weekly', 'bolt_monthly']],
     ];
 
-    $cat = $categories[$catKey];
-    $keyboard = ['inline_keyboard' => []];
+    if (!isset($categories[$catKey])) return;
 
-    foreach ($cat['keys'] as $pCode) {
-        $price = $db['prices'][$pCode] ?? 0;
+    $cat =$categories[$catKey];$keyboard = ['inline_keyboard' => []];
+
+    foreach ($cat['keys'] as $pCode) {$price = $db['prices'][$pCode] ?? 0;
         $keyboard['inline_keyboard'][] = [
             ['text' => $productNames[$pCode] . " - (" . $price . " USDT)", 'callback_data' => 'buy_' . $pCode]
         ];
     }
     $keyboard['inline_keyboard'][] = [['text' => '🔙 العودة للقائمة الرئيسية', 'callback_data' => 'main_menu']];
 
-    editMessageText($chatId, $msgId, $cat['title'] . "\n\nاختر مدة الاشتراك المناسبة لك:", $keyboard, $apiUrl);
+    editMessageText($chatId, $msgId,$cat['title'] . "\n\nاختر مدة الاشتراك المناسبة لك:", $keyboard,$apiUrl);
 }
 
 // ==============================================================================
 // 6. [ الدوال العامة للربط مع API تليجرام عبر cURL ]
 // ==============================================================================
 
-function sendMessage($chatId, $text, $keyboard, $apiUrl) {
-    $postData = [
+function sendMessage($chatId, $text,$keyboard, $apiUrl) {$postData = [
         'chat_id'    => $chatId,
         'text'       => $text,
         'parse_mode' => 'Markdown',
     ];
     if ($keyboard) $postData['reply_markup'] = json_encode($keyboard);
-    sendCurl($apiUrl . '/sendMessage', $postData);
+    sendCurl($apiUrl . '/sendMessage',$postData);
 }
 
-function editMessageText($chatId, $msgId, $text, $keyboard, $apiUrl) {
-    $postData = [
+function editMessageText($chatId,$msgId, $text,$keyboard, $apiUrl) {$postData = [
         'chat_id'    => $chatId,
         'message_id' => $msgId,
         'text'       => $text,
         'parse_mode' => 'Markdown',
     ];
     if ($keyboard) $postData['reply_markup'] = json_encode($keyboard);
-    sendCurl($apiUrl . '/editMessageText', $postData);
+    sendCurl($apiUrl . '/editMessageText',$postData);
 }
 
-function sendCurl($url, $postData) {
+function sendCurl($url,$postData) {
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
-    curl_exec($ch);
+    curl_setopt($ch, CURLOPT_POSTFIELDS,$postData);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    $result = curl_exec($ch);
     curl_close($ch);
+    return $result;
 }
 
 ?>
